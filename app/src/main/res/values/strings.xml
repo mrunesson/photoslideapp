@@ -1,0 +1,24 @@
+<resources>
+    <string name="app_name">Photo Review</string>
+    <string name="server_settings">Server settings</string>
+    <string name="server_address">Server address</string>
+    <string name="server_address_help">Use your computer’s LAN address on a phone, or http://10.0.2.2:8080 on the Android emulator.</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
+    <string name="connected">Connected to photo server</string>
+    <string name="connecting">Connecting to photo server…</string>
+    <string name="recent_photos_count">Recent photos (%1$d of 10)</string>
+    <string name="empty_photos">No photos shown yet</string>
+    <string name="waiting_for_server">Waiting for photos</string>
+    <string name="empty_photos_description">Newly shown photos will appear here automatically.</string>
+    <string name="photo_description">Photo: %1$s</string>
+    <string name="album_value">Album: %1$s</string>
+    <string name="captured_at_value">Captured: %1$s</string>
+    <string name="rate_photo">Rate this photo</string>
+    <string name="rating_choice">★ %1$d</string>
+    <string name="reject_photo">Reject</string>
+    <string name="faulty_tag_prompt">Tap a tag to report it as faulty</string>
+    <string name="exif_tag_name">EXIF tag name</string>
+    <string name="report_faulty_tag">Report tag</string>
+    <string name="feedback_saved">Feedback saved</string>
+</resources>
