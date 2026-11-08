@@ -11,6 +11,7 @@
     <string name="empty_photos">No photos shown yet</string>
     <string name="waiting_for_server">Waiting for photos</string>
     <string name="empty_photos_description">Newly shown photos will appear here automatically.</string>
+    <string name="new_photos_available">New photos available</string>
     <string name="photo_description">Photo: %1$s</string>
     <string name="album_value">Album: %1$s</string>
     <string name="captured_at_value">Captured: %1$s</string>

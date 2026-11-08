@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -31,15 +32,18 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -47,6 +51,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import kotlinx.coroutines.launch
 import org.linuxalert.photo_slide_app.R
 import org.linuxalert.photo_slide_app.data.PhotoConnection
 import org.linuxalert.photo_slide_app.domain.Photo
@@ -88,6 +93,29 @@ fun PhotoReviewScreen(
     onTagChanged: (Photo, String) -> Unit,
     onReportTag: (Photo, String) -> Unit,
 ) {
+    val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
+    val newestSelectionKey = state.photos.firstOrNull()?.selectionKey
+    var previousNewestSelectionKey by remember {
+        mutableStateOf(newestSelectionKey)
+    }
+    var hasUnseenPhotos by remember { mutableStateOf(false) }
+
+    LaunchedEffect(newestSelectionKey) {
+        val previousKey = previousNewestSelectionKey
+        if (previousKey != null && newestSelectionKey != null && newestSelectionKey != previousKey) {
+            if (listState.firstVisibleItemIndex == 0) {
+                listState.scrollToItem(0)
+                hasUnseenPhotos = false
+            } else {
+                hasUnseenPhotos = true
+            }
+        } else if (newestSelectionKey == null) {
+            hasUnseenPhotos = false
+        }
+        previousNewestSelectionKey = newestSelectionKey
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -116,8 +144,23 @@ fun PhotoReviewScreen(
             if (state.photos.isEmpty()) {
                 EmptyPhotoState(state.connection, Modifier.fillMaxWidth().weight(1f))
             } else {
+                if (hasUnseenPhotos) {
+                    Button(
+                        onClick = {
+                            coroutineScope.launch {
+                                listState.animateScrollToItem(0)
+                                hasUnseenPhotos = false
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.new_photos_available))
+                    }
+                    Spacer(Modifier.height(dimensionResource(R.dimen.spacing_small)))
+                }
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    state = listState,
+                    modifier = Modifier.fillMaxSize().testTag("photo-review-list"),
                     contentPadding = PaddingValues(bottom = dimensionResource(R.dimen.spacing_large)),
                     verticalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.spacing_medium)),
                 ) {
