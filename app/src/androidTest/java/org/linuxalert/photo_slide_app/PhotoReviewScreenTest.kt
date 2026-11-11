@@ -132,6 +132,35 @@ class PhotoReviewScreenTest {
         composeRule.onAllNodesWithText("New photos available").assertCountEquals(0)
     }
 
+    @Test
+    fun localNetworkPermissionNoticeOffersRecoveryWithoutHidingPhotos() {
+        val state = mutableStateOf(reviewState(listOf(photo("latest"))))
+        var permissionRequested = false
+        var settingsOpened = false
+        composeRule.setContent {
+            PhotoSlideAppTheme {
+                PhotoReviewScreen(
+                    state = state.value,
+                    onOpenSettings = {},
+                    onRate = { _, _ -> },
+                    onReject = {},
+                    onTagChanged = { _, _ -> },
+                    onReportTag = { _, _ -> },
+                    localNetworkPermissionGranted = false,
+                    onRequestLocalNetworkPermission = { permissionRequested = true },
+                    onOpenAppSettings = { settingsOpened = true },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Local network access is off").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Photo: latest").assertIsDisplayed()
+        composeRule.onNodeWithText("Request permission").performClick()
+        composeRule.runOnIdle { assert(permissionRequested) }
+        composeRule.onNodeWithText("Open app settings").performClick()
+        composeRule.runOnIdle { assert(settingsOpened) }
+    }
+
     private fun reviewState(photos: List<Photo>) = PhotoReviewUiState(
         photos = photos,
         connection = PhotoConnection.CONNECTED,

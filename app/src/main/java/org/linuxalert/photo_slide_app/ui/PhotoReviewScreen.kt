@@ -1,5 +1,14 @@
 package org.linuxalert.photo_slide_app.ui
 
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -32,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,12 +53,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
@@ -58,14 +72,59 @@ import org.linuxalert.photo_slide_app.domain.Photo
 import org.linuxalert.photo_slide_app.domain.PhotoMetadata
 import org.linuxalert.photo_slide_app.ui.theme.PhotoSlideAppTheme
 
+private const val LOCAL_NETWORK_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
+private const val LOCAL_NETWORK_PERMISSION_API = 37
+
 @Composable
 fun PhotoReviewApp(viewModel: PhotoReviewViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val localNetworkPermissionGranted = remember {
+        mutableStateOf(context.hasLocalNetworkPermission())
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted && !localNetworkPermissionGranted.value) viewModel.reconnect()
+        localNetworkPermissionGranted.value = granted || Build.VERSION.SDK_INT < LOCAL_NETWORK_PERMISSION_API
+    }
+
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= LOCAL_NETWORK_PERMISSION_API && !localNetworkPermissionGranted.value) {
+            permissionLauncher.launch(LOCAL_NETWORK_PERMISSION)
+        }
+    }
+
+    DisposableEffect(context, lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                val granted = context.hasLocalNetworkPermission()
+                if (granted && !localNetworkPermissionGranted.value) viewModel.reconnect()
+                localNetworkPermissionGranted.value = granted
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     PhotoReviewScreen(
         state = state,
+        localNetworkPermissionGranted = localNetworkPermissionGranted.value,
         onOpenSettings = { showSettings = true },
+        onRequestLocalNetworkPermission = {
+            if (Build.VERSION.SDK_INT >= LOCAL_NETWORK_PERMISSION_API) {
+                permissionLauncher.launch(LOCAL_NETWORK_PERMISSION)
+            }
+        },
+        onOpenAppSettings = {
+            context.startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.fromParts("package", context.packageName, null)
+                },
+            )
+        },
         onRate = viewModel::rate,
         onReject = viewModel::reject,
         onTagChanged = viewModel::updateTagDraft,
@@ -74,8 +133,16 @@ fun PhotoReviewApp(viewModel: PhotoReviewViewModel = hiltViewModel()) {
     if (showSettings) {
         ServerSettingsDialog(
             address = state.serverAddress,
-            error = state.connectionError,
+            error = state.connectionError ?: state.discoveryError,
             onDismiss = { showSettings = false },
+            onDiscoverAgain = {
+                viewModel.reconnect()
+                showSettings = false
+            },
+            onUseAutomaticDiscovery = {
+                viewModel.useAutomaticDiscovery()
+                showSettings = false
+            },
             onSave = { address ->
                 if (viewModel.saveServerAddress(address)) showSettings = false
             },
@@ -92,6 +159,9 @@ fun PhotoReviewScreen(
     onReject: (Photo) -> Unit,
     onTagChanged: (Photo, String) -> Unit,
     onReportTag: (Photo, String) -> Unit,
+    localNetworkPermissionGranted: Boolean = true,
+    onRequestLocalNetworkPermission: () -> Unit = {},
+    onOpenAppSettings: () -> Unit = {},
 ) {
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
@@ -134,7 +204,20 @@ fun PhotoReviewScreen(
                 .padding(contentPadding)
                 .padding(horizontal = dimensionResource(R.dimen.spacing_medium)),
         ) {
-            ConnectionStatus(state.connection, state.connectionError)
+            ConnectionStatus(
+                connection = state.connection,
+                connectionError = state.connectionError,
+                discoveryError = state.discoveryError,
+                automatic = state.serverAddress.isBlank(),
+                discoveredServerAddress = state.discoveredServerAddress,
+            )
+            if (!localNetworkPermissionGranted) {
+                LocalNetworkPermissionCard(
+                    onRequestPermission = onRequestLocalNetworkPermission,
+                    onOpenAppSettings = onOpenAppSettings,
+                )
+                Spacer(Modifier.height(dimensionResource(R.dimen.spacing_small)))
+            }
             Spacer(Modifier.height(dimensionResource(R.dimen.spacing_small)))
             Text(
                 text = stringResource(R.string.recent_photos_count, state.photos.size),
@@ -183,7 +266,49 @@ fun PhotoReviewScreen(
 }
 
 @Composable
-private fun ConnectionStatus(connection: PhotoConnection, error: String?) {
+private fun LocalNetworkPermissionCard(
+    onRequestPermission: () -> Unit,
+    onOpenAppSettings: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(dimensionResource(R.dimen.spacing_medium)),
+            verticalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.spacing_small)),
+        ) {
+            Text(
+                text = stringResource(R.string.local_network_permission_title),
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                text = stringResource(R.string.local_network_permission_description),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(onClick = onRequestPermission, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.grant_local_network_access))
+            }
+            TextButton(
+                onClick = onOpenAppSettings,
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            ) {
+                Text(stringResource(R.string.open_app_settings))
+            }
+        }
+    }
+}
+
+private fun Context.hasLocalNetworkPermission(): Boolean =
+    Build.VERSION.SDK_INT < LOCAL_NETWORK_PERMISSION_API ||
+        ContextCompat.checkSelfPermission(this, LOCAL_NETWORK_PERMISSION) == PackageManager.PERMISSION_GRANTED
+
+@Composable
+private fun ConnectionStatus(
+    connection: PhotoConnection,
+    connectionError: String?,
+    discoveryError: String?,
+    automatic: Boolean,
+    discoveredServerAddress: String?,
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -194,13 +319,24 @@ private fun ConnectionStatus(connection: PhotoConnection, error: String?) {
         }
         Text(
             text = stringResource(
-                if (connection == PhotoConnection.CONNECTED) R.string.connected else R.string.connecting,
+                when {
+                    automatic && discoveredServerAddress == null -> R.string.searching_for_server
+                    connection == PhotoConnection.CONNECTED -> R.string.connected
+                    else -> R.string.connecting
+                },
             ),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.primary,
         )
     }
-    if (error != null) {
+    if (automatic && discoveredServerAddress != null) {
+        Text(
+            text = stringResource(R.string.discovered_server, discoveredServerAddress),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    (connectionError ?: discoveryError)?.let { error ->
         Text(
             text = error,
             style = MaterialTheme.typography.bodySmall,
@@ -343,6 +479,8 @@ private fun ServerSettingsDialog(
     address: String,
     error: String?,
     onDismiss: () -> Unit,
+    onDiscoverAgain: () -> Unit,
+    onUseAutomaticDiscovery: () -> Unit,
     onSave: (String) -> Unit,
 ) {
     var editedAddress by rememberSaveable(address) { mutableStateOf(address) }
@@ -351,7 +489,10 @@ private fun ServerSettingsDialog(
         title = { Text(stringResource(R.string.server_settings)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(dimensionResource(R.dimen.spacing_small))) {
-                Text(stringResource(R.string.server_address_help), style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    stringResource(R.string.server_address_help),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
                 OutlinedTextField(
                     value = editedAddress,
                     onValueChange = { editedAddress = it },
@@ -360,6 +501,12 @@ private fun ServerSettingsDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                     singleLine = true,
                 )
+                TextButton(
+                    onClick = if (address.isBlank()) onDiscoverAgain else onUseAutomaticDiscovery,
+                    modifier = Modifier.align(Alignment.Start),
+                ) {
+                    Text(stringResource(if (address.isBlank()) R.string.discover_again else R.string.use_automatic_discovery))
+                }
                 error?.let {
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }

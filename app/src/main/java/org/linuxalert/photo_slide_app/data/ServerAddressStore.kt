@@ -20,6 +20,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 interface ServerAddressStore {
     val address: Flow<String>
     suspend fun save(address: String)
+    suspend fun clear()
 }
 
 @Singleton
@@ -41,9 +42,13 @@ class PreferenceServerAddressStore @Inject constructor(
         dataStore.edit { preferences -> preferences[SERVER_ADDRESS] = normalized }
     }
 
+    override suspend fun clear() {
+        dataStore.edit { preferences -> preferences.remove(SERVER_ADDRESS) }
+    }
+
     companion object {
         val SERVER_ADDRESS = stringPreferencesKey("server_address")
-        const val DEFAULT_SERVER_ADDRESS = "http://10.0.2.2:8080"
+        const val DEFAULT_SERVER_ADDRESS = ""
     }
 }
 

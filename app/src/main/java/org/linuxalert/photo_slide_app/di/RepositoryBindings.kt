@@ -6,7 +6,11 @@ import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import org.linuxalert.photo_slide_app.data.OkHttpPhotoEventSource
 import org.linuxalert.photo_slide_app.data.PhotoEventSource
+import org.linuxalert.photo_slide_app.data.AndroidNsdServiceBrowser
+import org.linuxalert.photo_slide_app.data.NsdServerDiscovery
+import org.linuxalert.photo_slide_app.data.NsdServiceBrowser
 import org.linuxalert.photo_slide_app.data.PreferenceServerAddressStore
+import org.linuxalert.photo_slide_app.data.ServerDiscovery
 import org.linuxalert.photo_slide_app.data.ServerAddressStore
 
 @Module
@@ -17,4 +21,10 @@ abstract class RepositoryBindings {
 
     @Binds
     abstract fun bindServerAddressStore(implementation: PreferenceServerAddressStore): ServerAddressStore
+
+    @Binds
+    abstract fun bindNsdServiceBrowser(implementation: AndroidNsdServiceBrowser): NsdServiceBrowser
+
+    @Binds
+    abstract fun bindServerDiscovery(implementation: NsdServerDiscovery): ServerDiscovery
 }

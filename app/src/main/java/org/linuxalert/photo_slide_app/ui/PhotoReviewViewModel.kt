@@ -5,14 +5,18 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.linuxalert.photo_slide_app.data.PhotoConnection
 import org.linuxalert.photo_slide_app.data.PhotoRepository
+import org.linuxalert.photo_slide_app.data.ServerDiscovery
 import org.linuxalert.photo_slide_app.data.ServerAddressStore
 import org.linuxalert.photo_slide_app.data.validateServerAddress
 import org.linuxalert.photo_slide_app.domain.Photo
@@ -21,6 +25,8 @@ data class PhotoReviewUiState(
     val photos: List<Photo> = emptyList(),
     val connection: PhotoConnection = PhotoConnection.CONNECTING,
     val serverAddress: String = "",
+    val discoveredServerAddress: String? = null,
+    val discoveryError: String? = null,
     val connectionError: String? = null,
     val feedbackMessages: Map<String, String> = emptyMap(),
     val feedbackInProgress: Set<String> = emptySet(),
@@ -31,25 +37,84 @@ data class PhotoReviewUiState(
 class PhotoReviewViewModel @Inject constructor(
     private val repository: PhotoRepository,
     private val serverAddressStore: ServerAddressStore,
+    private val serverDiscovery: ServerDiscovery,
 ) : ViewModel() {
     private val _state = MutableStateFlow(PhotoReviewUiState())
+    private val reconnectRequests = MutableStateFlow(0)
     val state = _state.asStateFlow()
 
     init {
         viewModelScope.launch {
-            serverAddressStore.address.distinctUntilChanged().collectLatest { address ->
-                _state.update {
-                    it.copy(serverAddress = address, connection = PhotoConnection.CONNECTING, connectionError = null)
-                }
-                repository.observePhotos(address).collect { feed ->
+            combine(serverAddressStore.address.distinctUntilChanged(), reconnectRequests) { address, _ -> address }
+                .collectLatest { address ->
                     _state.update {
                         it.copy(
-                            photos = feed.photos,
-                            connection = feed.connection,
-                            connectionError = feed.error,
+                            serverAddress = address,
+                            discoveredServerAddress = null,
+                            discoveryError = null,
+                            photos = emptyList(),
+                            connection = PhotoConnection.CONNECTING,
+                            connectionError = null,
                         )
                     }
+                    if (address.isNotBlank()) {
+                        repository.observePhotos(address).collect(::updateFeed)
+                    } else {
+                        coroutineScope {
+                            var currentAddress: String? = null
+                            var feedJob: Job? = null
+                            serverDiscovery.discover().collect { discovery ->
+                                _state.update {
+                                    it.copy(
+                                        discoveredServerAddress = discovery.address,
+                                        discoveryError = discovery.error,
+                                    )
+                                }
+                                if (currentAddress != discovery.address) {
+                                    currentAddress = discovery.address
+                                    feedJob?.cancel()
+                                    if (discovery.address == null) {
+                                        _state.update {
+                                            it.copy(
+                                                photos = emptyList(),
+                                                connection = PhotoConnection.CONNECTING,
+                                                connectionError = null,
+                                            )
+                                        }
+                                    } else {
+                                        _state.update {
+                                            it.copy(
+                                                photos = emptyList(),
+                                                connection = PhotoConnection.CONNECTING,
+                                                connectionError = null,
+                                            )
+                                        }
+                                        val discoveredAddress = discovery.address
+                                        feedJob = launch {
+                                            repository.observePhotos(discoveredAddress).collect(::updateFeed)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
+        }
+    }
+
+    fun reconnect() {
+        reconnectRequests.update { it + 1 }
+    }
+
+    fun useAutomaticDiscovery() {
+        viewModelScope.launch {
+            try {
+                serverAddressStore.clear()
+                reconnect()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _state.update { it.copy(connectionError = error.message ?: "Unable to clear server address") }
             }
         }
     }
@@ -112,6 +177,16 @@ class PhotoReviewViewModel @Inject constructor(
             } finally {
                 _state.update { it.copy(feedbackInProgress = it.feedbackInProgress - key) }
             }
+        }
+    }
+
+    private fun updateFeed(feed: org.linuxalert.photo_slide_app.data.PhotoFeed) {
+        _state.update {
+            it.copy(
+                photos = feed.photos,
+                connection = feed.connection,
+                connectionError = feed.error,
+            )
         }
     }
 }
